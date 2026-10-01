@@ -72,10 +72,10 @@
             android:exported="true"
             />
 
-        <activity
+       <activity
             android:name=".ui.input.InputActivity"
             android:exported="true"
-            android:theme="@style/Theme.Wearable.Modal"
+            android:theme="@style/Theme.WearMouse.Input"
             />
 
         <activity
