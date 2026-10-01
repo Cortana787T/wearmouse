@@ -1,20 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Copyright 2018 Google LLC All Rights Reserved.
-
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-  Unless required by applicable law or agreed to in writing, software
-  distributed under the License is distributed on an "AS IS" BASIS,
-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  See the License for the specific language governing permissions and
-  limitations under the License.
-  -->
 <resources>
+
     <style name="Text" parent="@android:style/TextAppearance.DeviceDefault">
         <item name="android:textSize">@dimen/content_text_size</item>
         <item name="android:textColor">?android:textColorPrimary</item>
@@ -32,12 +18,14 @@
     </style>
 
     <style name="Theme.App.Starting" parent="Theme.SplashScreen">
-        <!-- Set the splash screen background to black -->
         <item name="windowSplashScreenBackground">@android:color/black</item>
-        <!-- Use windowSplashScreenAnimatedIcon to add a drawable or an animated
-             drawable. -->
         <item name="windowSplashScreenAnimatedIcon">@drawable/splash_screen</item>
-        <!-- Set the theme of the Activity that follows your splash screen. -->
         <item name="postSplashScreenTheme">@android:style/Theme.DeviceDefault</item>
     </style>
+
+    <!-- Disable Wear OS edge swipe while using the input screen -->
+    <style name="Theme.WearMouse.Input" parent="@style/Theme.Wearable.Modal">
+        <item name="android:windowSwipeToDismiss">false</item>
+    </style>
+
 </resources>
