@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout WearMouse
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -23,71 +23,86 @@ jobs:
         run: |
           from pathlib import Path
 
-          p = Path("app/src/main/res/values/styles.xml")
-          s = p.read_text()
+          path = Path("app/src/main/res/values/styles.xml")
+          text = path.read_text()
 
-          if "Theme.WearMouse.Input" not in s:
-              s = s.replace(
+          if "Theme.WearMouse.Input" not in text:
+              patch = """
+              <style name="Theme.WearMouse.Input"
+                  parent="@style/Theme.Wearable.Modal">
+                  <item name="android:windowSwipeToDismiss">false</item>
+              </style>
+              """
+
+              text = text.replace(
                   "</resources>",
-                  """    <style name="Theme.WearMouse.Input"
-              parent="@style/Theme.Wearable.Modal">
-              <item name="android:windowSwipeToDismiss">false</item>
-          </style>
-          </resources>"""
+                  patch + "\n</resources>"
               )
 
-          p.write_text(s)
+              path.write_text(text)
 
-      - name: Patch InputActivity
+          print("styles.xml patched successfully.")
+
+      - name: Patch AndroidManifest.xml
         shell: python
         run: |
           from pathlib import Path
-          import re
 
-          p = Path("app/src/main/AndroidManifest.xml")
-          s = p.read_text()
+          path = Path("app/src/main/AndroidManifest.xml")
+          text = path.read_text()
 
-          # Find the InputActivity element.
-          pattern = (
-              r'(<activity\b[^>]*'
-              r'android:name="\Q.ui.input.InputActivity\E"[^>]*/>)'
-          )
+          activity_name = 'android:name=".ui.input.InputActivity"'
 
-          # Python does not support \Q, so use the literal version.
-          pattern = (
-              r'(<activity\b[^>]*'
-              r'android:name="\.\ui\.input\.InputActivity"[^>]*/>)'
-          )
+          start = text.find("<activity", text.find(activity_name))
 
-          match = re.search(pattern, s, re.DOTALL)
+          if start == -1:
+              raise RuntimeError("InputActivity was not found.")
 
-          if not match:
+          end = text.find("/>", start)
+
+          if end == -1:
               raise RuntimeError(
-                  "Could not find InputActivity in AndroidManifest.xml"
+                  "Could not find the end of the InputActivity element."
               )
 
-          block = match.group(1)
+          end += 2
+
+          block = text[start:end]
+
+          print("Original InputActivity:")
+          print(block)
 
           # Replace the existing theme.
-          block = re.sub(
-              r'android:theme="[^"]*"',
-              'android:theme="@style/Theme.WearMouse.Input"',
-              block
-          )
+          old_theme = 'android:theme="@style/Theme.Wearable.Modal"'
+          new_theme = 'android:theme="@style/Theme.WearMouse.Input"'
 
-          s = s[:match.start(1)] + block + s[match.end(1):]
+          if old_theme in block:
+              block = block.replace(old_theme, new_theme)
+          elif new_theme not in block:
+              # If there isn't a theme attribute, add one.
+              block = block.replace(
+                  "/>",
+                  f'\n            {new_theme}\n            />'
+              )
 
-          p.write_text(s)
+          text = text[:start] + block + text[end:]
+
+          path.write_text(text)
+
+          print()
+          print("Patched InputActivity:")
+          print(block)
 
       - name: Verify patch
         run: |
-          echo "===== InputActivity ====="
-          grep -A6 'InputActivity' app/src/main/AndroidManifest.xml
+          echo "===== Theme ====="
+          grep -A4 "Theme.WearMouse.Input" \
+            app/src/main/res/values/styles.xml
 
           echo
-          echo "===== Patched theme ====="
-          grep -A4 'Theme.WearMouse.Input' \
-            app/src/main/res/values/styles.xml
+          echo "===== InputActivity ====="
+          grep -A8 'InputActivity' \
+            app/src/main/AndroidManifest.xml
 
       - name: Make Gradle executable
         run: chmod +x ./gradlew
@@ -97,6 +112,7 @@ jobs:
 
       - name: Find APK
         run: |
+          echo "APK files:"
           find app/build/outputs/apk \
             -type f \
             -name "*.apk" \
