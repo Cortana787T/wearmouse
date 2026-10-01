@@ -9,74 +9,135 @@ jobs:
 
     steps:
       - name: Checkout WearMouse
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: temurin
+          java-version: '17'
+          cache: gradle
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      # Add a theme that disables the Wear OS swipe-back gesture
-      - name: Patch WearMouse theme
-        shell: bash
+      - name: Patch WearMouse
+        shell: python
         run: |
-          python3 <<'PY'
           from pathlib import Path
+          import re
 
-          p = Path("app/src/main/res/values/styles.xml")
-          s = p.read_text()
+          # ------------------------------------------------------------
+          # 1. Add a theme that disables Wear OS swipe-to-dismiss
+          # ------------------------------------------------------------
 
-          if "Theme.WearMouse.Input" not in s:
-              s = s.replace(
-                  "</resources>",
-                  """    <style name="Theme.WearMouse.Input"
-                      parent="@style/Theme.Wearable.Modal">
-                      <item name="android:windowSwipeToDismiss">false</item>
-                  </style>
+          styles = Path("app/src/main/res/values/styles.xml")
+          text = styles.read_text()
 
-              </resources>"""
+          if "Theme.WearMouse.Input" not in text:
+              addition = """
+              <style name="Theme.WearMouse.Input"
+                  parent="@style/Theme.Wearable.Modal">
+                  <item name="android:windowSwipeToDismiss">false</item>
+              </style>
+          """
+
+              text = text.replace("</resources>", addition + "\n</resources>")
+              styles.write_text(text)
+
+          # ------------------------------------------------------------
+          # 2. Change ONLY InputActivity to use the new theme
+          # ------------------------------------------------------------
+
+          manifest = Path("app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+
+          pattern = (
+              r'(<activity\s+'
+              r'android:name="\Q.ui.input.InputActivity\E".*?'
+              r'android:theme=")([^"]+)(".*?'
+              r'/>)'
+          )
+
+          # Python's regex doesn't support \Q...\E, so use a simpler pattern.
+          pattern = (
+              r'(<activity\b[^>]*'
+              r'android:name="\Q.ui.input.InputActivity\E"[^>]*'
+              r'android:theme=")[^"]+(".*?/)'
+          )
+
+          # Again, use literal escaping instead.
+          pattern = (
+              r'(<activity\b[^>]*'
+              r'android:name="\.\ui\.input\.InputActivity"[^>]*'
+              r'android:theme=")[^"]+(".*?/)'
+          )
+
+          patched, count = re.subn(
+              pattern,
+              r'\1@style/Theme.WearMouse.Input\2',
+              text,
+              count=1,
+              flags=re.DOTALL
+          )
+
+          if count == 0:
+              print("Could not patch using the normal pattern.")
+              print("Trying a block-based patch...")
+
+              activity_pattern = (
+                  r'(<activity\b[^>]*'
+                  r'android:name="\.\ui\.input\.InputActivity"'
+                  r'[^>]*)(/?>)'
               )
 
-          p.write_text(s)
-          PY
-
-      # Make InputActivity use the patched theme
-      - name: Patch InputActivity
-        shell: bash
-        run: |
-          python3 <<'PY'
-          from pathlib import Path
-
-          p = Path("app/src/main/AndroidManifest.xml")
-          s = p.read_text()
-
-          old = 'android:theme="@style/Theme.Wearable.Modal"'
-          new = 'android:theme="@style/Theme.WearMouse.Input"'
-
-          if old not in s:
-              raise SystemExit(
-                  "Could not find the InputActivity theme. "
-                  "The WearMouse source may have changed."
+              match = re.search(
+                  activity_pattern,
+                  text,
+                  flags=re.DOTALL
               )
 
-          s = s.replace(old, new, 1)
-          p.write_text(s)
-          PY
+              if not match:
+                  raise RuntimeError(
+                      "Could not find InputActivity in AndroidManifest.xml"
+                  )
 
-      # Build the APK
-      - name: Build WearMouse
+              block = match.group(1)
+
+              # Remove an existing theme attribute if present.
+              block = re.sub(
+                  r'\s+android:theme="[^"]*"',
+                  '',
+                  block
+              )
+
+              block += '\n                android:theme="@style/Theme.WearMouse.Input"'
+
+              patched = (
+                  text[:match.start(1)]
+                  + block
+                  + text[match.end(1):]
+              )
+
+          manifest.write_text(patched)
+
+          print("Patch complete.")
+          print()
+          print("InputActivity:")
+          for line in patched.splitlines():
+              if "InputActivity" in line or "Theme.WearMouse.Input" in line:
+                  print(line)
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Build APK
         run: ./gradlew assembleDebug --stacktrace
 
-      # Show exactly what APK was produced
-      - name: Find APK
+      - name: Show APK
         run: |
           find app/build/outputs/apk -type f -name "*.apk" -print
 
-      # Make the APK available from the GitHub Actions run
       - name: Upload patched APK
         uses: actions/upload-artifact@v4
         with:
