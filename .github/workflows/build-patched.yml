@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout WearMouse
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -18,127 +18,91 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Patch styles.xml
+        shell: python
+        run: |
+          from pathlib import Path
 
-      - name: Patch WearMouse
+          p = Path("app/src/main/res/values/styles.xml")
+          s = p.read_text()
+
+          if "Theme.WearMouse.Input" not in s:
+              s = s.replace(
+                  "</resources>",
+                  """    <style name="Theme.WearMouse.Input"
+              parent="@style/Theme.Wearable.Modal">
+              <item name="android:windowSwipeToDismiss">false</item>
+          </style>
+          </resources>"""
+              )
+
+          p.write_text(s)
+
+      - name: Patch InputActivity
         shell: python
         run: |
           from pathlib import Path
           import re
 
-          # ------------------------------------------------------------
-          # 1. Add a theme that disables Wear OS swipe-to-dismiss
-          # ------------------------------------------------------------
+          p = Path("app/src/main/AndroidManifest.xml")
+          s = p.read_text()
 
-          styles = Path("app/src/main/res/values/styles.xml")
-          text = styles.read_text()
-
-          if "Theme.WearMouse.Input" not in text:
-              addition = """
-              <style name="Theme.WearMouse.Input"
-                  parent="@style/Theme.Wearable.Modal">
-                  <item name="android:windowSwipeToDismiss">false</item>
-              </style>
-          """
-
-              text = text.replace("</resources>", addition + "\n</resources>")
-              styles.write_text(text)
-
-          # ------------------------------------------------------------
-          # 2. Change ONLY InputActivity to use the new theme
-          # ------------------------------------------------------------
-
-          manifest = Path("app/src/main/AndroidManifest.xml")
-          text = manifest.read_text()
-
-          pattern = (
-              r'(<activity\s+'
-              r'android:name="\Q.ui.input.InputActivity\E".*?'
-              r'android:theme=")([^"]+)(".*?'
-              r'/>)'
-          )
-
-          # Python's regex doesn't support \Q...\E, so use a simpler pattern.
+          # Find the InputActivity element.
           pattern = (
               r'(<activity\b[^>]*'
-              r'android:name="\Q.ui.input.InputActivity\E"[^>]*'
-              r'android:theme=")[^"]+(".*?/)'
+              r'android:name="\Q.ui.input.InputActivity\E"[^>]*/>)'
           )
 
-          # Again, use literal escaping instead.
+          # Python does not support \Q, so use the literal version.
           pattern = (
               r'(<activity\b[^>]*'
-              r'android:name="\.\ui\.input\.InputActivity"[^>]*'
-              r'android:theme=")[^"]+(".*?/)'
+              r'android:name="\.\ui\.input\.InputActivity"[^>]*/>)'
           )
 
-          patched, count = re.subn(
-              pattern,
-              r'\1@style/Theme.WearMouse.Input\2',
-              text,
-              count=1,
-              flags=re.DOTALL
+          match = re.search(pattern, s, re.DOTALL)
+
+          if not match:
+              raise RuntimeError(
+                  "Could not find InputActivity in AndroidManifest.xml"
+              )
+
+          block = match.group(1)
+
+          # Replace the existing theme.
+          block = re.sub(
+              r'android:theme="[^"]*"',
+              'android:theme="@style/Theme.WearMouse.Input"',
+              block
           )
 
-          if count == 0:
-              print("Could not patch using the normal pattern.")
-              print("Trying a block-based patch...")
+          s = s[:match.start(1)] + block + s[match.end(1):]
 
-              activity_pattern = (
-                  r'(<activity\b[^>]*'
-                  r'android:name="\.\ui\.input\.InputActivity"'
-                  r'[^>]*)(/?>)'
-              )
+          p.write_text(s)
 
-              match = re.search(
-                  activity_pattern,
-                  text,
-                  flags=re.DOTALL
-              )
+      - name: Verify patch
+        run: |
+          echo "===== InputActivity ====="
+          grep -A6 'InputActivity' app/src/main/AndroidManifest.xml
 
-              if not match:
-                  raise RuntimeError(
-                      "Could not find InputActivity in AndroidManifest.xml"
-                  )
-
-              block = match.group(1)
-
-              # Remove an existing theme attribute if present.
-              block = re.sub(
-                  r'\s+android:theme="[^"]*"',
-                  '',
-                  block
-              )
-
-              block += '\n                android:theme="@style/Theme.WearMouse.Input"'
-
-              patched = (
-                  text[:match.start(1)]
-                  + block
-                  + text[match.end(1):]
-              )
-
-          manifest.write_text(patched)
-
-          print("Patch complete.")
-          print()
-          print("InputActivity:")
-          for line in patched.splitlines():
-              if "InputActivity" in line or "Theme.WearMouse.Input" in line:
-                  print(line)
+          echo
+          echo "===== Patched theme ====="
+          grep -A4 'Theme.WearMouse.Input' \
+            app/src/main/res/values/styles.xml
 
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
-      - name: Build APK
+      - name: Build WearMouse
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Show APK
+      - name: Find APK
         run: |
-          find app/build/outputs/apk -type f -name "*.apk" -print
+          find app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
 
-      - name: Upload patched APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: WearMouse-patched
